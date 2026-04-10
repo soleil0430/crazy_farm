@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>광란의 목장 — 프로토타입</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a1a; color: #eee; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 16px; }
+#hud { display: flex; gap: 10px; align-items: center; padding: 10px 0; flex-wrap: wrap; width: 100%; max-width: 720px; }
+.hud-item { background: #2a2a2a; border: 1px solid #444; border-radius: 8px; padding: 6px 14px; font-size: 14px; }
+.btn { background: #2a2a2a; border: 1px solid #666; border-radius: 8px; padding: 6px 14px; font-size: 14px; cursor: pointer; color: #eee; }
+.btn:hover { background: #3a3a3a; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#log { font-size: 12px; color: #aaa; min-height: 18px; padding: 2px 0; width: 100%; max-width: 720px; }
+#game-canvas { position: relative; width: 720px; max-width: 100%; height: 420px; background: #5a9e30; border-radius: 12px; overflow: hidden; cursor: crosshair; border: 3px solid #3a7e10; }
+.ground-stripe { position: absolute; bottom: 0; left: 0; right: 0; height: 40px; background: #8b5e2a; }
+.sheep { position: absolute; display: flex; flex-direction: column; align-items: center; cursor: grab; user-select: none; }
+.sheep-body { border-radius: 50%; border: 2px solid rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #333; }
+.wool-bar { width: 100%; height: 4px; background: rgba(0,0,0,0.2); border-radius: 2px; margin-top: 2px; overflow: hidden; }
+.wool-fill { height: 100%; background: #f5c842; border-radius: 2px; }
+.wool-ready { outline: 3px solid #f5c842; outline-offset: 2px; animation: pulse 0.8s ease-in-out infinite alternate; }
+@keyframes pulse { from { outline-color: #f5c842; } to { outline-color: #ff9900; } }
+.enemy { position: absolute; display: flex; align-items: center; justify-content: center; border-radius: 50%; cursor: pointer; font-size: 20px; }
+.hp-bar-wrap { position: absolute; bottom: -8px; left: 0; right: 0; height: 4px; background: rgba(0,0,0,0.3); border-radius: 2px; overflow: hidden; }
+.hp-bar { height: 100%; background: #e24b4a; border-radius: 2px; }
+.gold-pop { position: absolute; font-size: 13px; font-weight: 700; color: #f5c842; text-shadow: 0 1px 3px rgba(0,0,0,0.7); pointer-events: none; animation: floatUp 0.9s ease-out forwards; z-index: 99; }
+@keyframes floatUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-45px); opacity: 0; } }
+.tunnel { position: absolute; width: 36px; height: 22px; background: #2a1005; border-radius: 50%; animation: tunnelPop 0.4s ease-out; z-index: 5; }
+@keyframes tunnelPop { 0% { transform: scale(0) rotate(-10deg); } 100% { transform: scale(1) rotate(0deg); } }
+#wave-bar-wrap { background: #333; border-radius: 6px; height: 8px; flex: 1; min-width: 80px; overflow: hidden; }
+#wave-bar { height: 100%; background: #e24b4a; border-radius: 6px; transition: width 0.5s linear; }
+#instructions { font-size: 12px; color: #888; margin-top: 8px; max-width: 720px; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div class="hud-item">💰 <span id="gold-display">100</span>g</div>
+  <div class="hud-item">스테이지 <span id="stage-display">1</span></div>
+  <button class="btn" id="buy-btn" onclick="buySheep()">양 구매 (100g)</button>
+  <button class="btn" id="upgrade-btn" onclick="upgradeRange()">양털 수거 범위 업그레이드 Lv.1 (50g)</button>
+  <button class="btn" id="click-dmg-btn" onclick="upgradeClickDmg()">클릭 데미지 업그레이드 Lv.2 (500g)</button>
+  <button class="btn" id="hero-btn" onclick="rollHero()">영웅 뽑기 (150g)</button>
+  <button class="btn" id="hero-auto-merge-btn" onclick="startHeroAutoMerge()">영웅 자동 합체</button>
+  <button class="btn" id="hero-place-btn" onclick="toggleHeroPlaceMode()" style="border-color:#9c27b0; color:#9c27b0;">🔧 배치 모드 OFF</button>
+  <button class="btn" onclick="rollCollector()">수거꾼 뽑기 (150g)</button>
+  <button class="btn" onclick="startCollectorAutoMerge()">수거꾼 자동 합체</button>
+  <button class="btn" onclick="saveGame()">💾 저장</button>
+  <button class="btn" onclick="loadGame()">📂 불러오기</button>
+  <button class="btn" id="pause-btn" onclick="togglePause()">⏸ 일시정지</button>
+  <div class="hud-item" style="font-size:12px;">다음 웨이브</div>
+  <div id="wave-bar-wrap"><div id="wave-bar" style="width:100%"></div></div>
+  <div class="hud-item" id="wave-label">60s</div>
+</div>
+<div id="log">양을 클릭해 털을 수거하세요. 같은 단계 양을 드래그해 붙이면 머지!</div>
+<div id="game-canvas">
+  <div class="ground-stripe"></div>
+  <div id="range-indicator" style="position:absolute; border-radius:50%; border:2px solid rgba(255,220,50,0.7); background:rgba(255,220,50,0.12); pointer-events:none; transform:translate(-50%,-50%); display:none;"></div>
+  <div id="gameover-overlay" style="display:none; position:absolute; inset:0; background:rgba(0,0,0,0.75); z-index:50; flex-direction:column; align-items:center; justify-content:center; gap:16px;">
+    <div style="font-size:36px; font-weight:500; color:#e24b4a;">GAME OVER</div>
+    <div style="font-size:14px; color:#aaa;">양과 영웅이 모두 쓰러졌습니다</div>
+    <div style="font-size:13px; color:#666;">저장된 슬롯을 불러오거나 새 게임을 시작하세요</div>
+  </div>
+</div>
+
+<div id="slot-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:999; align-items:center; justify-content:center;">
+  <div style="background:#2a2a2a; border:1px solid #555; border-radius:12px; padding:24px; min-width:320px;">
+    <div style="font-size:16px; font-weight:500; margin-bottom:16px;" id="slot-modal-title">슬롯 선택</div>
+    <div id="slot-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+    <button class="btn" style="margin-top:16px; width:100%;" onclick="closeSlotModal()">취소</button>
+  </div>
+</div>
+<div id="instructions">
+  🐑 클릭: 털 수거 &nbsp;|&nbsp; 드래그 머지: 같은 단계 양끼리 겹치기 &nbsp;|&nbsp; 🐺 클릭: 적 처치 &nbsp;|&nbsp; 소+소→중, 중+중→대
+</div>
+
+<script>
+const canvas = document.getElementById('game-canvas');
+const goldDisplay = document.getElementById('gold-display');
+const buyBtn = document.getElementById('buy-btn');
+const logEl = document.getElementById('log');
+const waveBar = document.getElementById('wave-bar');
+const waveLabel = document.getElementById('wave-label');
+
+let gold = 100;
+let sheep = [];
+let enemies = [];
+let nextId = 0;
+let waveTimer = 20;
+let lastTime = null;
+let waveCount = 0;
+let stage = 1;
+
+const SIZES = { 0: 32, 1: 40, 2: 50, 3: 60, 4: 72 };
+const COLORS = { 0: '#f5f5f5', 1: '#d4f5d4', 2: '#cce0ff', 3: '#ffe0b0', 4: '#ffd0e8' };
+const LABELS = { 0: '1단', 1: '2단', 2: '3단', 3: '4단', 4: '5단' };
+const WOOL_GOLD = { 0: 30, 1: 70, 2: 140, 3: 280, 4: 560 };
+const SHEEP_MERGE_REQ = 3;
+const MAX_SHEEP_TIER = 4;
+const WOOL_BASE = 2.56;
+const WOOL_SPEED = [1, 0.8, 0.6];
+const MAX_STACK = 3;
+const SHEEP_COST = 100;
+
+const CLICK_DMG    = [1, 2, 3];
+const CLICK_COST   = [500, 1200];
+let clickDmgLevel  = 0;
+const MAX_RANGE_LEVEL = 30;
+const RANGE_COST = [50,60,60,70,80,90,100,110,120,140,160,170,190,220,240,270,310,340,380,430,480,540,610,680,760,850,950,1070,1190,1340];
+// Lv0=1px ~ Lv30=52px 선형 증가
+const RANGE_RADIUS = [1,3,4,6,8,10,11,13,15,16,18,20,21,23,25,27,28,30,32,33,35,37,38,40,42,44,45,47,49,50,52];
+let rangeLevel = 0;
+
+const HERO_GRADES = ['일반', '고급', '희귀', '영웅', '전설'];
+const HERO_COLORS = ['#888888', '#4caf50', '#2196f3', '#9c27b0', '#ff9800'];
+const HERO_PROB   = [70, 18, 8, 3, 1];
+const HERO_ATK    = [2, 2.4, 2.88, 3.46, 4.15];
+const HERO_HP     = [40, 48, 58, 69, 83];
+const HERO_CAP    = [4, 6, 10, 20, 999];
+const HERO_SIZE   = 32;
+const HERO_RANGES = [80, 96, 115, 138, 166];
+const HERO_SPEED  = 90;
+const ARROW_SPEED = 300;
+const SHEEP_HP = [21, 41, 61, 91, 131];
+let heroCost = 150;
+let heroes = [];
+let arrows = [];
+let collectors = [];
+
+const COLLECTOR_GRADES = ['1단', '2단', '3단', '4단', '5단'];
+const COLLECTOR_COLORS = ['#aaaaaa', '#66bb6a', '#42a5f5', '#ab47bc', '#ffa726'];
+const COLLECTOR_RANGES = [40, 48, 58, 69, 83];
+const COLLECTOR_SPEEDS = [105, 126, 152, 182, 218];
+const COLLECTOR_SIZE   = 42;
+const COLLECTOR_MERGE_REQ = 3;
+const COLLECTOR_COST = 150;
+let waveActive = false;
+let paused = false;
+let heroPlaceMode = false;
+
+function getW() { return canvas.clientWidth; }
+function getH() { return canvas.clientHeight; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+function createSheep(tier, x, y) {
+  const id = nextId++;
+  const size = SIZES[tier];
+  const el = document.createElement('div');
+  el.className = 'sheep';
+  el.style.width = size + 'px';
+  el.dataset.id = id;
+
+  const body = document.createElement('div');
+  body.className = 'sheep-body';
+  body.style.width = size + 'px';
+  body.style.height = size + 'px';
+  body.style.background = COLORS[tier];
+  body.textContent = LABELS[tier];
+
+  const wrapBar = document.createElement('div');
+  wrapBar.className = 'wool-bar';
+  const fill = document.createElement('div');
+  fill.className = 'wool-fill';
+  fill.style.width = '0%';
+  wrapBar.appendChild(fill);
+
+  const hpBarWrap = document.createElement('div');
+  hpBarWrap.style.cssText = `width:100%; height:3px; background:rgba(0,0,0,0.2); border-radius:2px; margin-top:1px; overflow:hidden;`;
+  const hpBarFill = document.createElement('div');
+  hpBarFill.style.cssText = `height:100%; width:100%; background:#e24b4a; border-radius:2px;`;
+  hpBarWrap.appendChild(hpBarFill);
+
+  el.appendChild(body);
+  el.appendChild(wrapBar);
+  el.appendChild(hpBarWrap);
+  canvas.appendChild(el);
+
+  const maxHp = SHEEP_HP[tier];
+  const s = {
+    id, tier, el, body, fill, hpBarFill,
+    hp: maxHp, maxHp,
+    x: clamp(x, size/2+20, getW()-size/2-20),
+    y: clamp(y, size/2+20, getH()-size/2-20),
+    vx: (Math.random()-0.5)*50,
+    vy: (Math.random()-0.5)*50,
+    woolProgress: 0,
+    woolStack: 0,
+    woolOverflowTimer: 0,
+    age: 0,
+    hidden: false,
+    shelterHero: null,
+    mergeTarget: null,
+    wanderAngle: Math.random() * Math.PI * 2,
+    wanderTimer: Math.random() * 2,
+  };
+  sheep.push(s);
+  updateSheepEl(s);
+
+  el.addEventListener('mousedown', (e) => { });
+  el.addEventListener('touchstart', (e) => { }, {passive:false});
+  return s;
+}
+
+function updateSheepEl(s) {
+  const size = SIZES[s.tier];
+  s.el.style.left = (s.x - size/2) + 'px';
+  s.el.style.top = (s.y - size/2) + 'px';
+  s.fill.style.width = (s.woolProgress * 100).toFixed(1) + '%';
+  const stackColor = ['#f5c842','#ffaa00','#ff7700'];
+  s.fill.style.background = s.woolStack > 0 ? stackColor[s.woolStack - 1] : '#f5c842';
+  if (s.woolStack >= MAX_STACK && s.woolOverflowTimer > 0) {
+    const danger = s.woolOverflowTimer / 5;
+    s.body.style.outline = `3px solid rgb(${Math.round(200 + 55*danger)}, ${Math.round(100 - 100*danger)}, 0)`;
+    s.body.style.outlineOffset = '2px';
+  } else if (s.woolStack > 0) {
+    s.body.style.outline = '3px solid #f5c842';
+    s.body.style.outlineOffset = '2px';
+  } else {
+    s.body.style.outline = '';
+  }
+  s.body.textContent = s.woolStack > 0 ? LABELS[s.tier] + ' ×' + s.woolStack : LABELS[s.tier];
+}
+
+function collectWool(s) {
+  if (s.woolStack <= 0) return;
+  const g = WOOL_GOLD[s.tier] * s.woolStack;
+  s.woolStack = 0;
+  s.woolProgress = 0;
+  gold += g;
+  updateGold();
+  showPop(s.x, s.y, '+' + g + 'g');
+  setLog('털 수거! +' + g + '골드');
+}
+
+function showPop(x, y, txt) {
+  const d = document.createElement('div');
+  d.className = 'gold-pop';
+  d.textContent = txt;
+  d.style.left = (x - 18) + 'px';
+  d.style.top = (y - 24) + 'px';
+  canvas.appendChild(d);
+  setTimeout(() => d.remove(), 950);
+}
+
+function updateGold() {
+  goldDisplay.textContent = gold;
+  buyBtn.disabled = gold < SHEEP_COST;
+  updateUpgradeBtn();
+  updateClickDmgBtn();
+}
+
+function updateUpgradeBtn() {
+  const btn = document.getElementById('upgrade-btn');
+  if (rangeLevel >= MAX_RANGE_LEVEL) {
+    btn.textContent = '양털 수거 범위 MAX';
+    btn.disabled = true;
+  } else {
+    btn.textContent = '양털 수거 범위 업그레이드 Lv.' + (rangeLevel + 1) + ' (' + RANGE_COST[rangeLevel] + 'g)';
+    btn.disabled = gold < RANGE_COST[rangeLevel];
+  }
+}
+
+function upgradeClickDmg() {
+  if (clickDmgLevel >= CLICK_DMG.length - 1) return;
+  const cost = CLICK_COST[clickDmgLevel];
+  if (gold < cost) { setLog('골드가 부족합니다!'); return; }
+  gold -= cost;
+  clickDmgLevel++;
+  updateGold();
+  updateClickDmgBtn();
+  setLog('클릭 데미지 업그레이드! Lv.' + (clickDmgLevel + 1) + ' (데미지 ' + CLICK_DMG[clickDmgLevel] + ')');
+}
+
+function updateClickDmgBtn() {
+  const btn = document.getElementById('click-dmg-btn');
+  if (clickDmgLevel >= CLICK_DMG.length - 1) {
+    btn.textContent = '클릭 데미지 MAX (Lv.3)';
+    btn.disabled = true;
+  } else {
+    btn.textContent = '클릭 데미지 업그레이드 Lv.' + (clickDmgLevel + 2) + ' (' + CLICK_COST[clickDmgLevel] + 'g)';
+    btn.disabled = gold < CLICK_COST[clickDmgLevel];
+  }
+}
+
+function upgradeRange() {
+  if (rangeLevel >= MAX_RANGE_LEVEL) return;
+  const cost = RANGE_COST[rangeLevel];
+  if (gold < cost) { setLog('골드가 부족합니다!'); return; }
+  gold -= cost;
+  rangeLevel++;
+  updateGold();
+  const el = document.getElementById('range-indicator');
+  if (el.style.display !== 'none') {
+    const r = RANGE_RADIUS[rangeLevel];
+    const size = Math.max(r * 2, 2);
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+  }
+  setLog('양털 수거 범위 업그레이드! Lv.' + rangeLevel + ' (범위: ' + RANGE_RADIUS[rangeLevel] + 'px)');
+}
+
+function updateRangeIndicator(x, y) {
+  const r = RANGE_RADIUS[rangeLevel];
+  const el = document.getElementById('range-indicator');
+  const size = Math.max(r * 2, 2);
+  el.style.width = size + 'px';
+  el.style.height = size + 'px';
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  el.style.display = 'block';
+}
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  holdX = e.clientX - rect.left;
+  holdY = e.clientY - rect.top;
+  updateRangeIndicator(holdX, holdY);
+  if (isHolding) collectInRange(holdX, holdY);
+});
+
+canvas.addEventListener('mouseleave', () => {
+  document.getElementById('range-indicator').style.display = 'none';
+});
+
+canvas.addEventListener('touchmove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  holdX = t.clientX - rect.left;
+  holdY = t.clientY - rect.top;
+  updateRangeIndicator(holdX, holdY);
+  if (isHolding) collectInRange(holdX, holdY);
+}, {passive: true});
+
+let isHolding = false;
+let holdX = 0, holdY = 0;
+
+canvas.addEventListener('mousedown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  isHolding = true;
+  holdX = e.clientX - rect.left;
+  holdY = e.clientY - rect.top;
+  collectInRange(holdX, holdY);
+});
+
+document.addEventListener('mouseup', () => { isHolding = false; });
+
+canvas.addEventListener('touchstart', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  isHolding = true;
+  holdX = t.clientX - rect.left;
+  holdY = t.clientY - rect.top;
+  collectInRange(holdX, holdY);
+}, {passive: false});
+
+canvas.addEventListener('touchend', () => { isHolding = false; });
+
+function collectInRange(cx, cy) {
+  const radius = RANGE_RADIUS[rangeLevel];
+  sheep.forEach(s => {
+    if (s.woolStack <= 0) return;
+    const sheepRadius = SIZES[s.tier] / 2;
+    if (Math.hypot(s.x - cx, s.y - cy) <= radius + sheepRadius) collectWool(s);
+  });
+}
+
+function rollGrade() {
+  const r = Math.random() * 100;
+  let acc = 0;
+  for (let i = 0; i < HERO_PROB.length; i++) {
+    acc += HERO_PROB[i];
+    if (r < acc) return i;
+  }
+  return 0;
+}
+
+function rollHero() {
+  if (gold < heroCost) { setLog('골드가 부족합니다!'); return; }
+  gold -= heroCost;
+  updateGold();
+
+  const grade = rollGrade();
+  const x = Math.random() * (getW() - 80) + 40;
+  const y = Math.random() * (getH() - 80) + 40;
+  createHero(grade, x, y);
+  setLog('영웅 등장! [' + HERO_GRADES[grade] + '] 등급');
+}
+
+function createHero(grade, x, y) {
+  const id = nextId++;
+  const range = HERO_RANGES[grade];
+
+  const el = document.createElement('div');
+  el.style.cssText = `position:absolute; width:${HERO_SIZE}px; height:${HERO_SIZE}px;
+    border-radius:4px; border:2px solid ${HERO_COLORS[grade]};
+    background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center;
+    font-size:10px; font-weight:700; color:${HERO_COLORS[grade]};
+    box-shadow:0 0 8px ${HERO_COLORS[grade]}88; cursor:grab; z-index:20;
+    pointer-events:${heroPlaceMode ? 'auto' : 'none'};`;
+  el.textContent = HERO_GRADES[grade][0];
+
+  // HP바
+  const hpWrap = document.createElement('div');
+  hpWrap.style.cssText = `position:absolute; bottom:-7px; left:0; right:0; height:4px;
+    background:rgba(0,0,0,0.3); border-radius:2px; overflow:hidden; pointer-events:none;`;
+  const hpFill = document.createElement('div');
+  hpFill.style.cssText = `height:100%; width:100%; background:#4caf50; border-radius:2px; transition:width 0.1s;`;
+  hpWrap.appendChild(hpFill);
+  el.appendChild(hpWrap);
+
+  // 범위 표시 원 — canvas에 직접 추가
+  const rangeEl = document.createElement('div');
+  rangeEl.style.cssText = `position:absolute; width:${range*2}px; height:${range*2}px;
+    border-radius:50%; border:2px solid ${HERO_COLORS[grade]};
+    background:${HERO_COLORS[grade]}28;
+    pointer-events:none; transform:translate(-50%,-50%);
+    opacity:0.2; transition:opacity 0.2s; z-index:15;`;
+  canvas.appendChild(rangeEl);
+  canvas.appendChild(el);
+
+  const maxHp = HERO_HP[grade];
+  const h = {
+    id, grade, el, rangeEl, hpFill, x, y,
+    hp: maxHp, maxHp,
+    vx: 0, vy: 0,
+    wanderAngle: Math.random()*Math.PI*2, wanderTimer: Math.random()*2,
+    age: 0, dragging: false,
+    atkCooldown: 0, target: null,
+    autoMergeTarget: null,
+  };
+  heroes.push(h);
+  updateHeroEl(h);
+
+  el.addEventListener('mouseenter', () => { h.rangeEl.style.opacity = '0.5'; });
+  el.addEventListener('mouseleave', () => { h.rangeEl.style.opacity = '0.2'; });
+
+  el.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    heroDragging = h;
+    const rect = canvas.getBoundingClientRect();
+    heroDragOffX = e.clientX - rect.left - h.x;
+    heroDragOffY = e.clientY - rect.top - h.y;
+    h.dragging = true;
+  });
+  el.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    heroDragging = h;
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    heroDragOffX = t.clientX - rect.left - h.x;
+    heroDragOffY = t.clientY - rect.top - h.y;
+    h.dragging = true;
+  }, {passive: false});
+
+  return h;
+}
+
+function updateHeroEl(h) {
+  h.el.style.left = (h.x - HERO_SIZE/2) + 'px';
+  h.el.style.top  = (h.y - HERO_SIZE/2) + 'px';
+  h.rangeEl.style.left = h.x + 'px';
+  h.rangeEl.style.top  = h.y + 'px';
+}
+
+let heroDragging = null;
+let heroDragOffX = 0, heroDragOffY = 0;
+
+document.addEventListener('mousemove', (e) => {
+  if (!heroDragging) return;
+  const rect = canvas.getBoundingClientRect();
+  heroDragging.x = clamp(e.clientX - rect.left - heroDragOffX, HERO_SIZE/2, getW()-HERO_SIZE/2);
+  heroDragging.y = clamp(e.clientY - rect.top - heroDragOffY, HERO_SIZE/2, getH()-HERO_SIZE/2);
+  updateHeroEl(heroDragging);
+});
+
+document.addEventListener('touchmove', (e) => {
+  if (!heroDragging) return;
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  heroDragging.x = clamp(t.clientX - rect.left - heroDragOffX, HERO_SIZE/2, getW()-HERO_SIZE/2);
+  heroDragging.y = clamp(t.clientY - rect.top - heroDragOffY, HERO_SIZE/2, getH()-HERO_SIZE/2);
+  updateHeroEl(heroDragging);
+}, {passive: false});
+
+function spawnArrow(h, target) {
+  const el = document.createElement('div');
+  el.style.cssText = `position:absolute; width:8px; height:3px;
+    background:${HERO_COLORS[h.grade]}; border-radius:2px; pointer-events:none; z-index:20;`;
+  canvas.appendChild(el);
+  const dx = target.x - h.x, dy = target.y - h.y;
+  const d = Math.hypot(dx, dy);
+  arrows.push({ el, x: h.x, y: h.y, vx: (dx/d)*ARROW_SPEED, vy: (dy/d)*ARROW_SPEED,
+    atk: HERO_ATK[h.grade], target });
+}
+
+document.addEventListener('mouseup', () => {
+  if (heroDragging) { heroDragging.dragging = false; heroDragging = null; }
+  isHolding = false;
+});
+document.addEventListener('touchend', () => {
+  if (heroDragging) { heroDragging.dragging = false; heroDragging = null; }
+  isHolding = false;
+});
+
+const HERO_MERGE_REQ = [3, 3, 3, 3];
+
+function startHeroAutoMerge() {
+  heroes.forEach(h => { h.autoMergeTarget = null; });
+
+  let totalPaired = 0;
+  for (let grade = 0; grade < HERO_GRADES.length - 1; grade++) {
+    const req = HERO_MERGE_REQ[grade];
+    const pool = heroes.filter(h => h.grade === grade && !h.autoMergeTarget);
+    const groups = Math.floor(pool.length / req);
+    for (let g = 0; g < groups; g++) {
+      const center = pool[g * req];
+      center.autoMergeTarget = center;
+      for (let i = 1; i < req; i++) {
+        pool[g * req + i].autoMergeTarget = center;
+      }
+      totalPaired++;
+    }
+  }
+  if (totalPaired === 0) setLog('합체 가능한 영웅이 부족합니다!');
+  else setLog('영웅 자동 합체 시작! ' + totalPaired + '그룹');
+}
+
+function removeHero(h) {
+  h.el.remove();
+  h.rangeEl.remove();
+  heroes = heroes.filter(x => x !== h);
+}
+
+function createCollector(grade, x, y) {
+  const id = nextId++;
+  const el = document.createElement('div');
+  const s = COLLECTOR_SIZE;
+  el.style.cssText = `position:absolute; width:${s}px; height:${s}px;
+    border-radius:50%; border:2px solid ${COLLECTOR_COLORS[grade]};
+    background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700; color:${COLLECTOR_COLORS[grade]};
+    box-shadow:0 0 6px ${COLLECTOR_COLORS[grade]}88; z-index:11; pointer-events:none;`;
+  el.textContent = '수' + (grade+1);
+  canvas.appendChild(el);
+
+  const c = {
+    id, grade, el, x, y,
+    vx: (Math.random()-0.5)*40, vy: (Math.random()-0.5)*40,
+    wanderAngle: Math.random()*Math.PI*2, wanderTimer: Math.random()*2,
+    autoMergeTarget: null,
+  };
+  collectors.push(c);
+  updateCollectorEl(c);
+  return c;
+}
+
+function updateCollectorEl(c) {
+  c.el.style.left = (c.x - COLLECTOR_SIZE/2) + 'px';
+  c.el.style.top  = (c.y - COLLECTOR_SIZE/2) + 'px';
+}
+
+function removeCollector(c) {
+  c.el.remove();
+  collectors = collectors.filter(x => x !== c);
+}
+
+function rollCollector() {
+  if (gold < COLLECTOR_COST) { setLog('골드가 부족합니다!'); return; }
+  gold -= COLLECTOR_COST;
+  updateGold();
+  const grade = 0;
+  const x = Math.random() * (getW() - 80) + 40;
+  const y = Math.random() * (getH() - 80) + 40;
+  createCollector(grade, x, y);
+  setLog('수거꾼 등장! [' + COLLECTOR_GRADES[grade] + ']');
+}
+
+function startCollectorAutoMerge() {
+  collectors.forEach(c => { c.autoMergeTarget = null; });
+  let totalPaired = 0;
+  for (let grade = 0; grade < COLLECTOR_GRADES.length - 1; grade++) {
+    const pool = collectors.filter(c => c.grade === grade && !c.autoMergeTarget);
+    const groups = Math.floor(pool.length / COLLECTOR_MERGE_REQ);
+    for (let g = 0; g < groups; g++) {
+      const center = pool[g * COLLECTOR_MERGE_REQ];
+      center.autoMergeTarget = center;
+      for (let i = 1; i < COLLECTOR_MERGE_REQ; i++) {
+        pool[g * COLLECTOR_MERGE_REQ + i].autoMergeTarget = center;
+      }
+      totalPaired++;
+    }
+  }
+  if (totalPaired === 0) setLog('합체 가능한 수거꾼이 부족합니다!');
+  else setLog('수거꾼 자동 합체 시작! ' + totalPaired + '그룹');
+}
+
+
+function buySheep() {
+  if (gold < SHEEP_COST) return;
+  gold -= SHEEP_COST;
+  updateGold();
+  createSheep(0, Math.random()*(getW()-80)+40, Math.random()*(getH()-80)+40);
+  setLog('소 단계 양 구매!');
+}
+
+document.addEventListener('mouseup', () => { isHolding = false; });
+document.addEventListener('touchend', () => { isHolding = false; });
+
+function autoMergePair() {
+  if (sheep.length < SHEEP_MERGE_REQ) return;
+  const ready = sheep.filter(s => s.age >= 20 && s.tier < MAX_SHEEP_TIER && !s.mergeTarget);
+  for (let tier = 0; tier <= MAX_SHEEP_TIER - 1; tier++) {
+    const pool = ready.filter(s => s.tier === tier && !s.mergeTarget);
+    if (pool.length < SHEEP_MERGE_REQ) continue;
+    // center가 집결 지점
+    const center = pool[0];
+    center.mergeTarget = center;
+    for (let i = 1; i < SHEEP_MERGE_REQ; i++) {
+      pool[i].mergeTarget = center;
+    }
+  }
+}
+
+function tryMerge(a, b) {
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const newTier = a.tier + 1;
+  removeSheep(a);
+  removeSheep(b);
+  createSheep(newTier, mx, my);
+  showPop(mx, my - 10, '✨ 머지!');
+  setLog(LABELS[newTier-1] + ' → ' + LABELS[newTier] + ' 단계!');
+}
+
+function removeSheep(s) {
+  s.el.remove();
+  sheep = sheep.filter(x => x !== s);
+}
+
+function spawnEnemy() {
+  waveCount++;
+  stage = Math.floor((waveCount - 1) / 5) + 1;
+  document.getElementById('stage-display').textContent = stage;
+  waveActive = true;
+  heroes.forEach(h => h.rangeEl.style.opacity = '1');
+  const baseCount = waveCount <= 9
+    ? Math.min(1 + Math.floor(waveCount / 2), 5)
+    : 5 + Math.floor((waveCount - 9) / 2);
+  const count = Math.min(baseCount, 12);
+  setLog('⚠️ 웨이브 ' + waveCount + '! 적 ' + count + '마리 등장!');
+  for (let i = 0; i < count; i++) {
+    setTimeout(() => spawnOneEnemy(), i * 500);
+  }
+}
+
+function spawnOneEnemy() {
+  const ex = Math.random() * (getW() - 80) + 40;
+  const ey = Math.random() * (getH() - 80) + 40;
+
+  const tunnel = document.createElement('div');
+  tunnel.className = 'tunnel';
+  tunnel.style.left = (ex - 18) + 'px';
+  tunnel.style.top = (ey - 11) + 'px';
+  canvas.appendChild(tunnel);
+
+  setTimeout(() => {
+    tunnel.remove();
+    if (enemies.length >= 12) return; // 최대 12마리 상주
+
+    const maxTier = Math.min(Math.floor(waveCount / 3), 2);
+    const tiers = [];
+    for (let t = 0; t <= maxTier; t++) tiers.push(t);
+    const tier = tiers[Math.floor(Math.random() * tiers.length)];
+
+    const ENEMY_MAXHP = [12, 22, 40];
+    const ENEMY_SPEED = [50, 70, 90];
+    const ENEMY_ATK   = [5, 10, 18];
+    const maxHp = ENEMY_MAXHP[tier];
+    const esize = 40 + tier * 8;
+    const emoji = ['🐺', '🦊', '👹'][tier];
+
+    const el = document.createElement('div');
+    el.className = 'enemy';
+    el.style.width = esize + 'px';
+    el.style.height = esize + 'px';
+    el.style.background = ['#c0392b','#d35400','#6c3483'][tier];
+    el.style.fontSize = (16 + tier * 3) + 'px';
+    el.textContent = emoji;
+
+    const hpWrap = document.createElement('div');
+    hpWrap.className = 'hp-bar-wrap';
+    const hpFill = document.createElement('div');
+    hpFill.className = 'hp-bar';
+    hpWrap.appendChild(hpFill);
+    el.appendChild(hpWrap);
+    canvas.appendChild(el);
+
+    const id = nextId++;
+    const enemy = { id, tier, el, hpFill, x: ex, y: ey, hp: maxHp, maxHp,
+      speed: ENEMY_SPEED[tier], atk: ENEMY_ATK[tier], target: null, atkCooldown: 0 };
+    enemies.push(enemy);
+    el.addEventListener('click', () => hitEnemy(enemy));
+    updateEnemyEl(enemy);
+  }, 500);
+}
+
+function updateEnemyEl(e) {
+  const s = parseInt(e.el.style.width);
+  e.el.style.left = (e.x - s/2) + 'px';
+  e.el.style.top = (e.y - s/2) + 'px';
+  e.hpFill.style.width = ((e.hp / e.maxHp) * 100) + '%';
+}
+
+function hitEnemy(e) {
+  const dmg = CLICK_DMG[clickDmgLevel];
+  e.hp -= dmg;
+  showPop(e.x, e.y - 24, '💥 -' + dmg);
+  e.hpFill.style.width = Math.max(0, (e.hp / e.maxHp) * 100) + '%';
+  if (e.hp <= 0) {
+    e.el.remove();
+    enemies = enemies.filter(x => x !== e);
+    setLog('적 처치!');
+  }
+}
+
+function setLog(msg) { logEl.textContent = msg; }
+
+function checkGameOver() {
+  if (sheep.length === 0 && heroes.length === 0) {
+    if (!paused) togglePause();
+    document.getElementById('gameover-overlay').style.display = 'flex';
+    setLog('💀 게임 오버');
+  }
+}
+
+function gameLoop(ts) {
+  if (!lastTime) lastTime = ts;
+  const dt = Math.min((ts - lastTime) / 1000, 0.1);
+  lastTime = ts;
+
+  if (paused) { requestAnimationFrame(gameLoop); return; }
+
+  waveTimer -= dt;
+  const pct = Math.max(0, waveTimer / 20);
+  waveBar.style.width = (pct * 100).toFixed(1) + '%';
+  waveLabel.textContent = Math.ceil(Math.max(0, waveTimer)) + 's';
+
+  if (waveTimer <= 0) {
+    waveTimer = 20;
+    spawnEnemy();
+  }
+
+  const W = getW(), H = getH();
+
+  if (isHolding) collectInRange(holdX, holdY);
+
+  // 전투 종료 또는 shelterHero 소멸 시 숨은 양 복귀
+  sheep.forEach(s => {
+    if (!s.hidden) return;
+    const heroGone = s.shelterHero && !heroes.includes(s.shelterHero);
+    if (enemies.length === 0 || heroGone) {
+      s.hidden = false;
+      s.shelterHero = null;
+      s.el.style.opacity = '1';
+      if (heroes.length > 0) {
+        const nearHero = heroes.reduce((best, h) => (!best || dist(s,h) < dist(s,best)) ? h : best, null);
+        s.x = nearHero.x + (Math.random()-0.5)*30;
+        s.y = nearHero.y + (Math.random()-0.5)*30;
+      }
+      s.vx = (Math.random()-0.5)*100;
+      s.vy = (Math.random()-0.5)*100;
+    }
+  });
+
+  autoMergePair();
+
+  const toDie = [];
+  sheep.forEach(s => {
+    const size = SIZES[s.tier];
+    let ax = 0, ay = 0;
+    let hasNearEnemy = false;
+
+    s.age += dt;
+
+    enemies.forEach(e => {
+      const dx = s.x - e.x, dy = s.y - e.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 160 && d > 0) {
+        hasNearEnemy = true;
+      }
+    });
+
+    if (hasNearEnemy && heroes.length > 0) {
+      // 수용 가능한 영웅 찾기 (현재 숨은 양 수 < 한계)
+      const availableHero = heroes
+        .map(h => ({ h, d: dist(s, h), count: sheep.filter(o => o.shelterHero === h).length }))
+        .filter(({ h, count }) => count < HERO_CAP[h.grade])
+        .sort((a, b) => a.d - b.d)[0];
+
+      if (availableHero) {
+        const { h: nearHero } = availableHero;
+        const dx = nearHero.x - s.x, dy = nearHero.y - s.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 4) {
+          ax += (dx / d) * 300;
+          ay += (dy / d) * 300;
+        }
+        if (d < HERO_SIZE / 2) {
+          s.el.style.opacity = '0';
+          s.hidden = true;
+          s.shelterHero = nearHero;
+        }
+      } else {
+        // 수용 한계 초과 — 적에게서 도망
+        enemies.forEach(e => {
+          const dx = s.x - e.x, dy = s.y - e.y;
+          const d = Math.hypot(dx, dy);
+          if (d < 160 && d > 0) {
+            const force = (160 - d) / 160 * 150;
+            ax += (dx / d) * force;
+            ay += (dy / d) * force;
+          }
+        });
+      }
+    } else if (hasNearEnemy) {
+      // 영웅 없으면 기존대로 도주
+      enemies.forEach(e => {
+        const dx = s.x - e.x, dy = s.y - e.y;
+        const d = Math.hypot(dx, dy);
+        if (d < 160 && d > 0) {
+          const force = (160 - d) / 160 * 150;
+          ax += (dx / d) * force;
+          ay += (dy / d) * force;
+        }
+      });
+    }
+
+    if (s.mergeTarget && sheep.includes(s.mergeTarget) && !hasNearEnemy) {
+      if (s.mergeTarget === s) {
+        // center는 이동 안 함
+      } else {
+        const dx = s.mergeTarget.x - s.x;
+        const dy = s.mergeTarget.y - s.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 6) {
+          ax += (dx / d) * 200;
+          ay += (dy / d) * 200;
+        }
+      }
+    } else if (!s.mergeTarget || !sheep.includes(s.mergeTarget)) {
+      if (!hasNearEnemy) {
+        if (heroes.length > 0) {
+          // 가장 가까운 영웅 주변 맴돌기
+          const nearHero = heroes.reduce((best, h) => (!best || dist(s,h) < dist(s,best)) ? h : best, null);
+          const dx = nearHero.x - s.x, dy = nearHero.y - s.y;
+          const d = Math.hypot(dx, dy);
+          const orbitRadius = HERO_SIZE * 2.5;
+          if (d > orbitRadius + 10) {
+            // 너무 멀면 영웅 쪽으로 접근
+            ax += (dx / d) * 80;
+            ay += (dy / d) * 80;
+          } else if (d < orbitRadius - 10) {
+            // 너무 가까우면 살짝 물러남
+            ax -= (dx / d) * 60;
+            ay -= (dy / d) * 60;
+          }
+          // 항상 배회 방향도 섞어줘서 자연스럽게 맴돌게
+          s.wanderTimer -= dt;
+          if (s.wanderTimer <= 0) {
+            s.wanderAngle += (Math.random() - 0.5) * Math.PI * 0.8;
+            s.wanderTimer = 1.5 + Math.random() * 2;
+          }
+          ax += Math.cos(s.wanderAngle) * 25;
+          ay += Math.sin(s.wanderAngle) * 25;
+        } else {
+          // 영웅 없으면 기존 자유 배회
+          s.wanderTimer -= dt;
+          if (s.wanderTimer <= 0) {
+            s.wanderAngle += (Math.random() - 0.5) * Math.PI * 1.2;
+            s.wanderTimer = 1.5 + Math.random() * 2;
+          }
+          ax += Math.cos(s.wanderAngle) * 40;
+          ay += Math.sin(s.wanderAngle) * 40;
+        }
+      }
+    }
+
+    s.vx = s.vx * 0.82 + ax * dt * 8;
+    s.vy = s.vy * 0.82 + ay * dt * 8;
+
+    const maxSpd = s.mergeTarget ? 150 : 100;
+    const spd = Math.hypot(s.vx, s.vy);
+    if (spd > maxSpd) { s.vx = s.vx/spd*maxSpd; s.vy = s.vy/spd*maxSpd; }
+
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.x = clamp(s.x, size/2+20, W - size/2 - 20);
+    s.y = clamp(s.y, size/2+20, H - size/2 - 20);
+
+    if (s.woolStack < MAX_STACK) {
+      const rate = WOOL_SPEED[s.woolStack] / WOOL_BASE;
+      s.woolProgress = Math.min(1, s.woolProgress + dt * rate);
+      if (s.woolProgress >= 1) {
+        s.woolStack++;
+        s.woolProgress = 0;
+      }
+      s.woolOverflowTimer = 0;
+    } else {
+      s.woolOverflowTimer += dt;
+      if (s.woolOverflowTimer >= 5) {
+        showPop(s.x, s.y, '💀 질식사!');
+        setLog('털을 못 수거해서 양이 죽었다!');
+        toDie.push(s);
+      }
+    }
+    updateSheepEl(s);
+  });
+
+  // 양 자동 머지 완료 체크
+  const sheepCenters = sheep.filter(s => s.mergeTarget === s);
+  sheepCenters.forEach(center => {
+    const group = sheep.filter(s => s.mergeTarget === center);
+    if (group.length >= SHEEP_MERGE_REQ && group.every(s => dist(s, center) < 10)) {
+      const newTier = center.tier + 1;
+      const mx = center.x, my = center.y;
+      group.forEach(s => removeSheep(s));
+      createSheep(newTier, mx, my);
+      showPop(mx, my - 10, '✨ 머지!');
+      setLog(LABELS[newTier-1] + ' 3마리 → ' + LABELS[newTier] + ' 단계!');
+    }
+  });
+
+  toDie.forEach(s => {
+    if (sheep.includes(s)) {
+      removeSheep(s);
+      if (sheep.length === 0) setLog('❌ 양 전멸! 골드를 모아 다시 구매하세요.');
+    }
+  });
+
+  enemies.forEach(e => {
+    const nearest = (pool) => pool.length > 0
+      ? pool.reduce((best, t) => (!best || dist(e,t) < dist(e,best)) ? t : best, null)
+      : null;
+
+    // 모든 적 양 우선, 양 없으면 영웅
+    if (!e.target || (!sheep.includes(e.target) && !heroes.includes(e.target))) {
+      e.target = nearest(sheep) || nearest(heroes);
+    }
+    // 양이 새로 생기면 다시 양 타겟
+    if (heroes.includes(e.target) && sheep.length > 0) {
+      e.target = nearest(sheep);
+    }
+
+    if (e.target) {
+      const dx = e.target.x - e.x, dy = e.target.y - e.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 2) { e.x += (dx/d)*e.speed*dt; e.y += (dy/d)*e.speed*dt; }
+
+      const isSheepTarget = sheep.includes(e.target);
+      const isHeroTarget = heroes.includes(e.target);
+      const eatDist = isSheepTarget ? (SIZES[e.target.tier] + 40) / 2 : HERO_SIZE / 2 + 10;
+
+      e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - dt);
+
+      if (d < eatDist) {
+        if (isSheepTarget && e.atkCooldown <= 0) {
+          const dmg = e.atk;
+          e.target.hp -= dmg;
+          e.atkCooldown = 1.0;
+          const pct = Math.max(0, e.target.hp / e.target.maxHp);
+          e.target.hpBarFill.style.width = (pct * 100) + '%';
+          showPop(e.target.x, e.target.y - 10, '-' + dmg);
+          if (e.target.hp <= 0) {
+            showPop(e.target.x, e.target.y, '😱 먹힘!');
+            removeSheep(e.target);
+            e.target = null;
+            if (sheep.length === 0) setLog('❌ 양 전멸!');
+            else setLog('양이 잡아먹혔다!');
+          }
+        } else if (isHeroTarget && e.atkCooldown <= 0) {
+          const dmg = e.atk;
+          e.target.hp -= dmg;
+          e.atkCooldown = 1.0;
+          const pct = Math.max(0, e.target.hp / e.target.maxHp);
+          e.target.hpFill.style.width = (pct * 100) + '%';
+          e.target.hpFill.style.background = pct > 0.5 ? '#4caf50' : pct > 0.25 ? '#ff9800' : '#e24b4a';
+          showPop(e.target.x, e.target.y - 10, '-' + dmg);
+          if (e.target.hp <= 0) {
+            showPop(e.target.x, e.target.y, '💢 격파!');
+            removeHero(e.target);
+            e.target = null;
+            setLog('영웅이 쓰러졌다!');
+          }
+        }
+      }
+    }
+    updateEnemyEl(e);
+  });
+
+  if (waveActive && enemies.length === 0) {
+    waveActive = false;
+    heroes.forEach(h => h.rangeEl.style.opacity = '0');
+  }
+
+  // 영웅 처리
+  const heroesToMerge = [];
+
+  heroes.forEach(h => {
+    if (h.dragging) return;
+    h.age += dt;
+    h.atkCooldown = Math.max(0, h.atkCooldown - dt);
+
+    const nearEnemy = enemies.length > 0
+      ? enemies.filter(e => dist(h, e) <= HERO_RANGES[h.grade])
+               .reduce((best, e) => (!best || dist(h,e) < dist(h,best)) ? e : best, null)
+      : null;
+
+    if (nearEnemy && h.atkCooldown <= 0) {
+      spawnArrow(h, nearEnemy);
+      h.atkCooldown = 0.2;
+    }
+
+    // 자동 합체 이동
+    if (h.autoMergeTarget) {
+      if (!heroes.includes(h.autoMergeTarget)) {
+        h.autoMergeTarget = null;
+      } else if (h.autoMergeTarget !== h) {
+        // center가 아닌 영웅만 이동
+        const dx = h.autoMergeTarget.x - h.x;
+        const dy = h.autoMergeTarget.y - h.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 6) {
+          h.x += (dx/d) * 120 * dt;
+          h.y += (dy/d) * 120 * dt;
+          h.x = clamp(h.x, HERO_SIZE/2, W-HERO_SIZE/2);
+          h.y = clamp(h.y, HERO_SIZE/2, H-HERO_SIZE/2);
+        }
+      }
+    }
+
+    updateHeroEl(h);
+  });
+
+  // 자동 합체 완료 체크 — 센터에 req개가 모이면 합체
+  const centerHeroes = heroes.filter(h => h.autoMergeTarget === h && heroes.includes(h));
+  // 실제로는 center(자기자신을 target으로 갖는)를 기준으로 모인 그룹 처리
+  const centers = heroes.filter(h => h.autoMergeTarget === h);
+  centers.forEach(center => {
+    const group = heroes.filter(h => h.autoMergeTarget === center);
+    const req = HERO_MERGE_REQ[center.grade];
+    const allClose = group.every(h => dist(h, center) < 10);
+    if (group.length >= req && allClose) {
+      const newGrade = center.grade + 1;
+      const mx = center.x, my = center.y;
+      group.forEach(h => removeHero(h));
+      createHero(newGrade, mx, my);
+      showPop(mx, my - 10, '✨ ' + HERO_GRADES[newGrade] + ' 탄생!');
+      setLog('[' + HERO_GRADES[newGrade] + '] 영웅 탄생!');
+    }
+  });
+
+  // 기존 2개짜리 heroesToMerge는 더 이상 사용 안 함
+  heroesToMerge.length = 0;
+
+  // 화살 처리
+  const arrowsToRemove = [];
+  arrows.forEach(a => {
+    a.x += a.vx * dt; a.y += a.vy * dt;
+    a.el.style.left = (a.x-4)+'px'; a.el.style.top = (a.y-1.5)+'px';
+    // 범위 벗어나면 제거
+    if (a.x < 0 || a.x > W || a.y < 0 || a.y > H) { arrowsToRemove.push(a); return; }
+    // 적 명중 체크
+    if (enemies.includes(a.target)) {
+      if (dist(a, a.target) < 20) {
+        a.target.hp -= a.atk;
+        a.target.hpFill.style.width = Math.max(0, (a.target.hp/a.target.maxHp)*100)+'%';
+        if (a.target.hp <= 0) {
+          a.target.el.remove();
+          enemies = enemies.filter(e => e !== a.target);
+          showPop(a.x, a.y, '처치!');
+        }
+        arrowsToRemove.push(a);
+      }
+    } else {
+      arrowsToRemove.push(a);
+    }
+  });
+  arrowsToRemove.forEach(a => { a.el.remove(); arrows = arrows.filter(x => x !== a); });
+
+  checkGameOver();
+
+  // 수거꾼 처리
+  const collectorMergeCenters = collectors.filter(c => c.autoMergeTarget === c);
+  collectorMergeCenters.forEach(center => {
+    const group = collectors.filter(c => c.autoMergeTarget === center);
+    if (group.length >= COLLECTOR_MERGE_REQ && group.every(c => dist(c, center) < 8)) {
+      const newGrade = center.grade + 1;
+      const mx = center.x, my = center.y;
+      group.forEach(c => removeCollector(c));
+      createCollector(newGrade, mx, my);
+      showPop(mx, my-10, '✨ 수거꾼 합체!');
+      setLog('[' + COLLECTOR_GRADES[newGrade] + '] 수거꾼 탄생!');
+    }
+  });
+
+  collectors.forEach(c => {
+    const range = COLLECTOR_RANGES[c.grade];
+    const speed = COLLECTOR_SPEEDS[c.grade];
+
+    // 자동 합체 이동
+    if (c.autoMergeTarget && c.autoMergeTarget !== c && collectors.includes(c.autoMergeTarget)) {
+      const dx = c.autoMergeTarget.x - c.x, dy = c.autoMergeTarget.y - c.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 6) { c.x += (dx/d)*speed*dt*1.5; c.y += (dy/d)*speed*dt*1.5; }
+    } else if (!c.autoMergeTarget || c.autoMergeTarget === c) {
+      // 배회 (양과 동일)
+      c.wanderTimer -= dt;
+      if (c.wanderTimer <= 0) {
+        c.wanderAngle += (Math.random()-0.5)*Math.PI*1.2;
+        c.wanderTimer = 1.5 + Math.random()*2;
+      }
+      let ax = Math.cos(c.wanderAngle)*40, ay = Math.sin(c.wanderAngle)*40;
+      c.vx = c.vx*0.82 + ax*dt*8;
+      c.vy = c.vy*0.82 + ay*dt*8;
+      const spd = Math.hypot(c.vx, c.vy);
+      if (spd > speed) { c.vx = c.vx/spd*speed; c.vy = c.vy/spd*speed; }
+      c.x += c.vx*dt; c.y += c.vy*dt;
+    }
+
+    c.x = clamp(c.x, COLLECTOR_SIZE/2+20, W-COLLECTOR_SIZE/2-20);
+    c.y = clamp(c.y, COLLECTOR_SIZE/2+20, H-COLLECTOR_SIZE/2-20);
+    updateCollectorEl(c);
+
+    // 범위 내 양털 수거
+    sheep.forEach(s => {
+      if (s.woolStack > 0 && dist(c, s) <= range + SIZES[s.tier]/2) {
+        collectWool(s);
+      }
+    });
+  });
+
+  requestAnimationFrame(gameLoop);
+}
+
+updateGold();
+createSheep(0, getW()/2, getH()/2);
+requestAnimationFrame(gameLoop);
+
+let slotMode = null;
+
+function getSlotData(slot) {
+  const raw = localStorage.getItem('crazyFarm_slot' + slot);
+  return raw ? JSON.parse(raw) : null;
+}
+
+function slotLabel(slot) {
+  const data = getSlotData(slot);
+  if (!data) return '슬롯 ' + slot + ' — 비어있음';
+  const d = new Date(data.savedAt);
+  const time = d.toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  return '슬롯 ' + slot + ' — 골드 ' + data.gold + 'g | 웨이브 ' + data.waveCount + ' | ' + time;
+}
+
+function openSlotModal(mode) {
+  slotMode = mode;
+  if (!paused) togglePause();
+  document.getElementById('slot-modal-title').textContent = mode === 'save' ? '💾 저장할 슬롯 선택' : '📂 불러올 슬롯 선택';
+  const list = document.getElementById('slot-list');
+  list.innerHTML = '';
+  for (let i = 1; i <= 5; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.style.cssText = 'width:100%; text-align:left; padding:10px 14px;';
+    btn.textContent = slotLabel(i);
+    const slot = i;
+    btn.onclick = () => {
+      if (slotMode === 'save') saveToSlot(slot);
+      else loadFromSlot(slot);
+      closeSlotModal();
+    };
+    list.appendChild(btn);
+  }
+  document.getElementById('slot-modal').style.display = 'flex';
+}
+
+function closeSlotModal() {
+  document.getElementById('slot-modal').style.display = 'none';
+}
+
+function saveGame() { openSlotModal('save'); }
+function loadGame() { openSlotModal('load'); }
+
+function saveToSlot(slot) {
+  const data = {
+    savedAt: Date.now(),
+    gold, rangeLevel, waveCount, waveTimer, stage, clickDmgLevel,
+    sheep: sheep.map(s => ({ tier: s.tier, x: s.x, y: s.y, woolStack: s.woolStack, woolProgress: s.woolProgress })),
+    heroes: heroes.map(h => ({ grade: h.grade, x: h.x, y: h.y, hp: h.hp })),
+  };
+  localStorage.setItem('crazyFarm_slot' + slot, JSON.stringify(data));
+  setLog('💾 슬롯 ' + slot + ' 저장 완료!');
+}
+
+function loadFromSlot(slot) {
+  const data = getSlotData(slot);
+  if (!data) { setLog('슬롯 ' + slot + ' 에 저장 데이터가 없습니다.'); return; }
+
+  sheep.forEach(s => s.el.remove()); sheep = [];
+  heroes.forEach(h => { h.el.remove(); h.rangeEl.remove(); }); heroes = [];
+  enemies.forEach(e => e.el.remove()); enemies = [];
+  arrows.forEach(a => a.el.remove()); arrows = [];
+  collectors.forEach(c => c.el.remove()); collectors = [];
+
+  gold = data.gold;
+  rangeLevel = data.rangeLevel;
+  waveCount = data.waveCount;
+  waveTimer = data.waveTimer;
+  stage = data.stage || 1;
+  clickDmgLevel = data.clickDmgLevel || 0;
+  document.getElementById('stage-display').textContent = stage;
+
+  data.sheep.forEach(s => {
+    const ns = createSheep(s.tier, s.x, s.y);
+    ns.woolStack = s.woolStack;
+    ns.woolProgress = s.woolProgress;
+    updateSheepEl(ns);
+  });
+  data.heroes.forEach(h => {
+    const nh = createHero(h.grade, h.x, h.y);
+    nh.hp = h.hp;
+    const pct = nh.hp / nh.maxHp;
+    nh.hpFill.style.width = (pct * 100) + '%';
+    nh.hpFill.style.background = pct > 0.5 ? '#4caf50' : pct > 0.25 ? '#ff9800' : '#e24b4a';
+  });
+
+  updateGold();
+  updateUpgradeBtn();
+  updateClickDmgBtn();
+  document.getElementById('gameover-overlay').style.display = 'none';
+  setLog('📂 슬롯 ' + slot + ' 불러오기 완료!');
+}
+
+function toggleHeroPlaceMode() {
+  heroPlaceMode = !heroPlaceMode;
+  const btn = document.getElementById('hero-place-btn');
+  if (heroPlaceMode) {
+    btn.textContent = '🔧 배치 모드 ON';
+    btn.style.background = '#9c27b0';
+    btn.style.color = '#fff';
+    btn.style.borderColor = '#9c27b0';
+  } else {
+    btn.textContent = '🔧 배치 모드 OFF';
+    btn.style.background = '';
+    btn.style.color = '#9c27b0';
+    btn.style.borderColor = '#9c27b0';
+  }
+  // 영웅 pointer-events 토글
+  heroes.forEach(h => {
+    h.el.style.pointerEvents = heroPlaceMode ? 'auto' : 'none';
+  });
+  setLog(heroPlaceMode ? '🔧 배치 모드 ON — 영웅을 드래그해 위치 조정' : '배치 모드 OFF — 일반 조작 모드');
+}
+
+function togglePause() {
+  paused = !paused;
+  lastTime = null;
+  const btn = document.getElementById('pause-btn');
+  btn.textContent = paused ? '▶ 재개' : '⏸ 일시정지';
+  setLog(paused ? '⏸ 일시정지' : '▶ 게임 재개');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); togglePause(); }
+  if (e.key === 'p' || e.key === 'P') {
+    gold += 10000;
+    updateGold();
+    setLog('[치트] 골드 +10000');
+  }
+  if (e.key === 'o' || e.key === 'O') {
+    waveTimer = 0;
+    setLog('[치트] 다음 웨이브 강제 실행');
+  }
+});
+</script>
+</body>
+</html>
